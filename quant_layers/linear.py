@@ -112,7 +112,7 @@ class PTQSLBatchingQuantLinear(PTQSLQuantLinear):
         self.calib_size = self.raw_input.shape[0]
         if torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
-            memory = props.total_memory // 2
+            memory = props.total_memory // 4
         else:
             raise EnvironmentError("CUDA is not available on this system")
         numel = (8 * self.raw_input[:self.calib_batch_size].numel() + 
@@ -526,20 +526,25 @@ class AsymmetricallyBatchingQuantLinear(PTQSLBatchingQuantLinear):
         self._initialize_calib_parameters()
         if self.fpcs:
             self.weight_fpcs(steps=self.steps, search_strategy=AsymmetricallyBatchingQuantLinear._search_best_w_scale_self)
-            self.activation_fpcs(steps=self.steps, search_strategy=AsymmetricallyBatchingQuantLinear._search_best_a_scale_self)
+            if self.a_quantizer.n_bits <= 8:
+                self.activation_fpcs(steps=self.steps, search_strategy=AsymmetricallyBatchingQuantLinear._search_best_a_scale_self)
         else:
             weight_scale_candidates, weight_zero_point_candidates = self.calculate_percentile_weight_candidates()
             a_scale_candidates, a_zero_point_candidates = self.calculate_percentile_activation_candidates()
             self._search_best_w_scale_self(weight_scale_candidates, weight_zero_point_candidates)
-            self._search_best_a_scale_self(a_scale_candidates, a_zero_point_candidates)
+            if self.a_quantizer.n_bits <= 8:
+                self._search_best_a_scale_self(a_scale_candidates, a_zero_point_candidates)
 
         for e in range(self.search_round):
             if self.fpcs:
                 self.weight_fpcs(steps=self.steps, search_strategy=AsymmetricallyBatchingQuantLinear._search_best_w_scale)
-                self.activation_fpcs(steps=self.steps, search_strategy=AsymmetricallyBatchingQuantLinear._search_best_a_scale)
+                if self.a_quantizer.n_bits <= 8:
+                    self.activation_fpcs(steps=self.steps, search_strategy=AsymmetricallyBatchingQuantLinear._search_best_a_scale)
             else:
                 self._search_best_w_scale(weight_scale_candidates, weight_zero_point_candidates)
-                self._search_best_a_scale(a_scale_candidates, a_zero_point_candidates)
+                if self.a_quantizer.n_bits <= 8:
+                    self._search_best_a_scale(a_scale_candidates, a_zero_point_candidates)
+        print("linear")
         self.calibrated = True
         del self.raw_input, self.raw_out
         return None
@@ -592,6 +597,7 @@ class AsymmetricallyChannelWiseBatchingQuantLinear(AsymmetricallyBatchingQuantLi
             a_scale_candidates, a_zero_point_candidates = self.calculate_percentile_activation_candidates()
             self._search_best_a_scale_self(a_scale_candidates, a_zero_point_candidates)
         self.calibrated = True
+        print("channel-wise linear")
         
     def reparam_step1(self):
         self.calibrated = False
@@ -992,7 +998,7 @@ class PostGeluLogBasedBatchingQuantLinear(AsymmetricallyBatchingQuantLinear):
             self.tmp_quantizer.inited = True
             self.a_quantizer = self.tmp_quantizer
             del self.tmp_quantizer
-        
+        print("log linear")
         self.calibrated = True
         del self.raw_input, self.raw_out
     

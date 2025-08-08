@@ -3,6 +3,7 @@ from torch import nn
 from quant_layers.linear import *
 from quant_layers.matmul import *
 from quant_layers.conv import *
+from quant_layers.log_linear import *
 from functools import partial
 import timm
 from timm.models.vision_transformer import Attention
@@ -64,6 +65,8 @@ def wrap_modules_in_net(model, cfg, reparam=False):
             module.forward = MethodType(swin_attn_forward, module)
 
     module_dict={}
+    # first_layer = True
+    # temp_qconv_a_bit = cfg.qconv_a_bit
     for name, module in model.named_modules():
         module_dict[name] = module
         idx = name.rfind('.')
@@ -74,14 +77,24 @@ def wrap_modules_in_net(model, cfg, reparam=False):
             father_module = module_dict[father_name]
         else:
             raise RuntimeError(f"father module {father_name} not found")
+        
+        # cfg.qconv_a_bit = 32 if first_layer else temp_qconv_a_bit
+        # print("Num bits for activation quantization in conv layer {}: {}".format(name, cfg.qconv_a_bit))
+        # if first_layer and isinstance(module, nn.Conv2d):
+        #     first_layer = False
 
         if isinstance(module, nn.Conv2d):
             idx = idx + 1 if idx != 0 else idx
-            new_module = AsymmetricallyBatchingQuantConv2d(
+            new_module = TwoWordLogQuantConv2d(
                 in_channels = module.in_channels, 
                 out_channels = module.out_channels,
                 kernel_size = module.kernel_size,
                 stride = module.stride,
+                padding= module.padding,
+                groups= module.groups,
+                dilation= module.dilation,
+                bias= module.bias is not None,
+                padding_mode= module.padding_mode,
                 mode = 'raw',
                 w_bit = cfg.w_bit,
                 a_bit = cfg.qconv_a_bit,
@@ -90,9 +103,16 @@ def wrap_modules_in_net(model, cfg, reparam=False):
                 eq_n = cfg.eq_n,
                 fpcs = cfg.fpcs,
                 steps = cfg.steps,
+                # a_mode = cfg.a_mode,
             )
             new_module.weight.data.copy_(module.weight.data)
-            new_module.bias.data.copy_(module.bias.data)
+            # print(new_module.w_quantizer)
+            if module.bias is not None:
+                new_module.bias.data.copy_(module.bias.data)
+            else:
+                new_module.bias = torch.nn.Parameter(
+                    torch.zeros(new_module.out_channels, device=new_module.weight.device)
+                )
             setattr(father_module, name[idx:], new_module)
         if isinstance(module, MatMul):
             idx = idx + 1 if idx != 0 else idx
@@ -162,9 +182,18 @@ def wrap_modules_in_net(model, cfg, reparam=False):
                         **linear_kwargs,
                     )
             else: 
-                new_module = AsymmetricallyBatchingQuantLinear(
+                # new_module = AsymmetricallyBatchingQuantLinear(
+                #     **linear_kwargs,
+                # )
+                # new_module = TwoWordLogQuantLinear2(
+                #     **linear_kwargs,
+                # )
+                new_module = TwoWordLogQuantLinear(
                     **linear_kwargs,
                 )
+                # new_module = LogQuantLinear(
+                #     **linear_kwargs,
+                # )
             new_module.weight.data.copy_(module.weight.data)
             if module.bias is not None:
                 new_module.bias.data.copy_(module.bias.data)

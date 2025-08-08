@@ -128,3 +128,43 @@ class ViTImageNetLoaderGenerator(ImageNetLoaderGenerator):
         config = resolve_data_config(model.default_cfg, model=model)
         self.train_transform = create_transform(**config, is_training=True)
         self.val_transform = create_transform(**config)
+
+class TorchvisionImageNetLoaderGenerator(ImageNetLoaderGenerator):
+    """
+    DataLoader for torchvision models using standard ImageNet transforms
+    """
+    def __init__(self, root, val_batch_size, num_workers, kwargs={}):
+        super().__init__(root, val_batch_size=val_batch_size, num_workers=num_workers, kwargs=kwargs)
+
+    def load(self):
+        # Standard ImageNet normalization
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                      std=[0.229, 0.224, 0.225])
+        
+        # Training transforms
+        self.train_transform = transforms.Compose([
+            transforms.Resize(224),  # Changed from RandomResizedCrop
+            transforms.CenterCrop(224),  # Added to ensure fixed size
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ])
+
+        # Validation transforms
+        self.val_transform = transforms.Compose([
+            transforms.Resize(224),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize,
+        ])
+
+    def train_loader(self, batch_size=None, shuffle=True):
+        if batch_size is None:
+            batch_size = self.val_batch_size
+        assert self.train_set is not None
+        return torch.utils.data.DataLoader(
+            self.train_set,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            **self.train_loader_kwargs
+        )

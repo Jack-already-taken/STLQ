@@ -37,6 +37,121 @@ class Log2Quantizer(nn.Module):
     def __repr__(self):
         return f'{self.__class__.__name__}(n_bits={self.n_bits}, sym={self.sym}, channel_wise={self.channel_wise}, log_base={2})'
 
+class LogQuantizer(nn.Module):
+    def __init__(self, n_bits: int = 8, symmetric: bool = False, channel_wise: bool = False):
+        super().__init__()
+        self.sym = symmetric
+        self.n_bits = n_bits
+        self.n_levels = 2 ** (self.n_bits - 1)
+        self.channel_wise = channel_wise
+        self.drop_prob = 1.0
+        self.inited = False
+        self.training_mode = False
+        self.use_clip_forward = False
+        self.register_buffer("quant_val", None)
+        if not channel_wise:
+            self.register_buffer("scale", torch.ones(1))
+
+    def init_training(self):
+        self.training_mode = True
+
+    def end_training(self):
+        self.training_mode = False
+    
+    def train(self, mode = True):
+        super().train(mode)
+        if mode:
+            self.init_training()
+        else:
+            self.end_training()
+        return self
+
+    def _quant_exp(self, x, offset=0, mask = 1):
+        e = -torch.log2(x)
+        e = round_ste(e) if self.training_mode else torch.round(e)
+        e = e * mask
+        return torch.clamp(e, 0 + offset, self.n_levels - 1 + offset)
+        
+    def forward(self, x):
+        if self.n_bits == 32:
+            return x
+        sign = torch.sign(x)
+        mag  = (x.abs() / self.scale).clamp(min=1e-15, max=1.0)
+        e    = self._quant_exp(mag)
+        self.quant_val = sign * e
+        return sign * (2.0 ** (-e)) * self.scale
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}(n_bits={self.n_bits}, sym={self.sym}, channel_wise={self.channel_wise})'
+
+class SelectiveTwoWordLogQuantizer(LogQuantizer):
+    def __init__(self, n_bits: int = 4, symmetric: bool = True, channel_wise: bool = False, threshold: float = 0.4, second_word_ratio: float = None):
+        super().__init__(n_bits, symmetric, channel_wise)
+        self.threshold = threshold
+        self.second_word_ratio = second_word_ratio
+        self.register_buffer('mask', None)
+    
+    def forward(self, x):
+        if self.n_bits == 32:
+            return x
+        sign = torch.sign(x)
+        
+        # First word quantization
+        x1 = x.clone()
+        mag1 = (x1.abs() / self.scale).clamp(min=1e-15, max=1.0)
+        exp1 = self._quant_exp(mag1)
+        self.quant_val = sign * exp1
+        x1_dequant = sign * (2.0 ** (-exp1)) * self.scale
+        
+        # Second word quantization
+        x2 = (x1 - x1_dequant) / self.scale
+        sign_x2 = torch.sign(x2)
+        x2_abs = x2.abs()
+        if not self.inited and self.second_word_ratio is not None:
+            self.threshold = torch.quantile(x2_abs, 1 - self.second_word_ratio)
+
+        self.mask = x2_abs > self.threshold
+        mag2 = (x2_abs).clamp(min=1e-15, max=1.0)
+        mag2 = mag2
+        exp2  = self._quant_exp(mag2, offset=2, mask=1)
+        x2_dequant = sign_x2 * (2.0 ** (-exp2)) * self.scale * self.mask.float()
+        
+        return x1_dequant + x2_dequant
+
+class SelectiveTwoWordLogQuantizer2(LogQuantizer):
+    def __init__(self, n_bits: int = 4, symmetric: bool = True, channel_wise: bool = False, threshold: float = 0.4, second_word_ratio: float = None, scale2: float = 1.0):
+        super().__init__(n_bits, symmetric, channel_wise)
+        self.threshold = threshold
+        self.second_word_ratio = second_word_ratio
+        self.register_buffer('mask', None)
+        self.scale2 = scale2
+    
+    def forward(self, x):
+        if self.n_bits == 32:
+            return x
+        sign = torch.sign(x)
+        
+        # First word quantization
+        x1 = x.clone()
+        mag1 = (x1.abs() / self.scale).clamp(min=1e-15, max=1.0)
+        exp1 = self._quant_exp(mag1)
+        self.quant_val = sign * exp1
+        x1_dequant = sign * (2.0 ** (-exp1)) * self.scale
+        
+        # Second word quantization
+        x2 = (x1 - x1_dequant) / self.scale
+        sign_x2 = torch.sign(x2)
+        x2_abs = x2.abs()
+        if not self.inited and self.second_word_ratio is not None:
+            self.threshold = torch.quantile(x2_abs, 1 - self.second_word_ratio)
+
+        self.mask = x2_abs > self.threshold
+        mag2 = (x2_abs / (self.scale * self.scale2)).clamp(min=1e-15, max=1.0)
+        mag2 = mag2
+        exp2  = self._quant_exp(mag2)
+        x2_dequant = sign_x2 * (2.0 ** (-exp2)) * (self.scale * self.scale2) * self.mask.float()
+        
+        return x1_dequant + x2_dequant
 
 class LogSqrt2Quantizer(Log2Quantizer):
     def __init__(self, n_bits: int = 8, symmetric: bool = False, channel_wise: bool = False):
@@ -133,4 +248,3 @@ class ShiftAdaLogQuantizer(AdaLogQuantizer):
     def forward(self, x):
         result = AdaLogQuantizer.forward(self, x + self.shift)
         return result if self.bias_reparamed else result - self.shift
-        

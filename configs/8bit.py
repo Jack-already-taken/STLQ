@@ -6,11 +6,11 @@ class Config:
         self.optim_size = 1024
         self.calib_batch_size = 32
         self.optim_batch_size = 32
-        self.w_bit = 4
-        self.a_bit = 4
-        self.s_bit = 4
-        self.qconv_a_bit = 4
-        self.qhead_a_bit = 4
+        self.w_bit = 8
+        self.a_bit = 8
+        self.s_bit = 8
+        self.qconv_a_bit = 8
+        self.qhead_a_bit = 8
         self.matmul_head_channel_wise = True
         self.post_softmax_quantizer = 'adalog'
         self.post_gelu_quantizer = 'adalog'

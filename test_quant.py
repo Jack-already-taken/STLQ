@@ -17,6 +17,7 @@ from utils.wrap_net import wrap_modules_in_net, wrap_reparamed_modules_in_net
 from utils.test_utils import *
 from datetime import datetime
 import logging
+import torchvision as tv
 
 while True:
     try:
@@ -47,7 +48,7 @@ def get_args_parser():
     parser.add_argument("--model", default="deit_small",
                         choices=['vit_tiny', 'vit_small', 'vit_base', 'vit_large',
                                  'deit_tiny', 'deit_small', 'deit_base', 
-                                 'swin_tiny', 'swin_small', 'swin_base', 'swin_base_384'],
+                                 'swin_tiny', 'swin_small', 'swin_base', 'swin_base_384', 'resnet18'],
                         help="model")
     parser.add_argument('--config', type=str, default="./configs/vit_config.py",
                         help="File path to import Config class from")
@@ -173,6 +174,8 @@ def main(args):
         'swin_small': 'swin_small_patch4_window7_224',
         'swin_base' : 'swin_base_patch4_window7_224',
         'swin_base_384': 'swin_base_patch4_window12_384',
+
+        'resnet18': 'resnet18',
     }
 
     seed_all(args.seed)

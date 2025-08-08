@@ -6,8 +6,13 @@ import torchvision.transforms as transforms
 from PIL import Image
 import logging
 
+def load_map(root):
+    with open(root, 'r') as f:
+        label_map = eval(f.read())
+    return label_map
 
-def validate(val_loader, model, criterion, print_freq=10, device='cuda:0'):
+
+def validate(val_loader, model, criterion, print_freq=10, device='cuda:0', class_to_idx=None):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -17,11 +22,40 @@ def validate(val_loader, model, criterion, print_freq=10, device='cuda:0'):
     model.eval()
 
     val_start_time = end = time.time()
+    imagenet100_map = load_map('/afs/andrew.cmu.edu/usr14/furix/furix/Public/Labels.txt')
+    imagenet1000_map = load_map('/afs/andrew.cmu.edu/usr14/furix/furix/Public/imagenet1000_clsidx_to_labels.txt')
+    reverse_imagenet100_map = {v: k for k, v in imagenet100_map.items()}
+    reverse_imagenet1000_map = {v: k for k, v in imagenet1000_map.items()}
+        
+
+    n_classes_1000 = 1000
+    translation = torch.full((n_classes_1000,), -1, device=device, dtype=torch.long)
+    
+    # Map ImageNet-1000 indices to ImageNet-100 indices
+    for k, v in reverse_imagenet1000_map.items():
+        if k in reverse_imagenet100_map:
+            # k is class name, v is 1000-class index
+            translation[v] = class_to_idx[reverse_imagenet100_map[k]]
+    
+
     for i, (data, target) in enumerate(val_loader):
         data = data.to(device)
         target = target.to(device)
         with torch.no_grad():
-            output = model(data)
+            # Forward pass - get 1000-class predictions
+            output_1000 = model(data)  # shape: [batch_size, 1000]
+            
+            # Translate to 100 classes efficiently
+            batch_size = output_1000.shape[0]
+            output_100 = torch.zeros((batch_size, 100), device=device)
+            
+            # Use mask to copy only valid classes
+            valid_indices = translation != -1
+            output_100[:, translation[valid_indices]] = output_1000[:, valid_indices]
+            
+            output = output_100
+        
+        # Translate the target to 1000 class
         loss = criterion(output, target)
 
         # measure accuracy and record loss
