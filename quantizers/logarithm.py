@@ -112,7 +112,6 @@ class SelectiveTwoWordLogQuantizer(LogQuantizer):
 
         self.mask = x2_abs > self.threshold
         mag2 = (x2_abs).clamp(min=1e-15, max=1.0)
-        mag2 = mag2
         exp2  = self._quant_exp(mag2, offset=2, mask=1)
         x2_dequant = sign_x2 * (2.0 ** (-exp2)) * self.scale * self.mask.float()
         
